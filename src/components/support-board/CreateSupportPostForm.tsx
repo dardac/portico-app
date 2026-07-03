@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { ApartmentField } from "@/components/ApartmentField";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import {
   SUPPORT_CATEGORIES,
   SUPPORT_CATEGORY_LABELS,
@@ -75,11 +77,39 @@ export function CreateSupportPostForm({
     buildInitialState(defaultApartmentCode),
   );
   const [error, setError] = useState<string | null>(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function submitPost() {
+    setError(null);
+    setErrorRetryable(false);
+    setIsSubmitting(true);
+
+    const result = await fetchJson<{ post: SupportPostDto; error?: string }>(
+      "/api/support-board",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      },
+    );
+
+    if (!result.ok) {
+      setError(result.error);
+      setErrorRetryable(result.retryable);
+      setIsSubmitting(false);
+      return;
+    }
+
+    setForm(buildInitialState(defaultApartmentCode));
+    onSuccess?.(result.data.post);
+    setIsSubmitting(false);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setErrorRetryable(false);
 
     const validationError = validateForm(form);
     if (validationError) {
@@ -87,37 +117,17 @@ export function CreateSupportPostForm({
       return;
     }
 
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch("/api/support-board", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "No se pudo crear la publicación.");
-        return;
-      }
-
-      setForm(buildInitialState(defaultApartmentCode));
-      onSuccess?.(data.post);
-    } catch {
-      setError("Error de conexión. Intenta de nuevo.");
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitPost();
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={errorRetryable ? () => void submitPost() : undefined}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <fieldset>

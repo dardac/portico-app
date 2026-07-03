@@ -8,17 +8,28 @@ alter table daily_census
   add column if not exists vehicle_count smallint,
   add column if not exists pet_count smallint;
 
-update daily_census c
-set
-  has_disability = p.has_disability,
-  disability_type = p.disability_type,
-  vehicle_count = p.vehicle_count,
-  pet_count = p.pet_count
-from daily_apartment_profile p
-where c.apartment_id = p.apartment_id
-  and c.census_date = p.profile_date
-  and c.will_stay_overnight = true
-  and c.has_disability is null;
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'daily_apartment_profile'
+      and column_name = 'vehicle_count'
+  ) then
+    update daily_census c
+    set
+      has_disability = p.has_disability,
+      disability_type = p.disability_type,
+      vehicle_count = p.vehicle_count,
+      pet_count = p.pet_count
+    from daily_apartment_profile p
+    where c.apartment_id = p.apartment_id
+      and c.census_date = p.profile_date
+      and c.will_stay_overnight = true
+      and c.has_disability is null;
+  end if;
+end $$;
 
 alter table daily_apartment_profile
   add column if not exists infrastructure_status text;
@@ -38,17 +49,17 @@ alter table daily_apartment_profile
   drop column if exists vehicle_count,
   drop column if exists pet_count;
 
-alter table daily_apartment_profile
-  add constraint daily_apartment_profile_infrastructure_status_check
-  check (
-    infrastructure_status is null
-    or infrastructure_status in (
-      'none',
-      'minor_cracks',
-      'severe_damage',
-      'uninhabitable'
-    )
-  );
+-- alter table daily_apartment_profile
+--   add constraint daily_apartment_profile_infrastructure_status_check
+--   check (
+--     infrastructure_status is null
+--     or infrastructure_status in (
+--       'none',
+--       'minor_cracks',
+--       'severe_damage',
+--       'uninhabitable'
+--     )
+--   );
 
 alter table daily_census
   drop constraint if exists daily_census_people_check;

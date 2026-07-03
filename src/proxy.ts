@@ -34,6 +34,7 @@ export async function proxy(request: NextRequest) {
 
   if (
     pathname.startsWith("/registro") ||
+    pathname.startsWith("/apartamento") ||
     pathname.startsWith("/protocolos") ||
     pathname.startsWith("/cartelera") ||
     pathname.startsWith("/perfil") ||
@@ -45,6 +46,18 @@ export async function proxy(request: NextRequest) {
       const loginUrl = new URL("/", request.url);
       return NextResponse.redirect(loginUrl);
     }
+    return NextResponse.next();
+  }
+
+  if (pathname.startsWith("/apartamentos")) {
+    if (!session) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    if (!isStaffSession(session) || !hasFullAdminAccess(session)) {
+      return NextResponse.redirect(new URL("/registro", request.url));
+    }
+
     return NextResponse.next();
   }
 
@@ -76,6 +89,13 @@ export async function proxy(request: NextRequest) {
       return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
 
+    if (
+      pathname.startsWith("/api/admin/apartments") &&
+      !hasFullAdminAccess(session)
+    ) {
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+    }
+
     return NextResponse.next();
   }
 
@@ -87,6 +107,8 @@ export const config = {
     "/",
     "/admin",
     "/registro/:path*",
+    "/apartamento/:path*",
+    "/apartamentos/:path*",
     "/protocolos/:path*",
     "/cartelera/:path*",
     "/perfil/:path*",

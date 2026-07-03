@@ -14,4 +14,5 @@ alter table public.apartments enable row level security;
 
 grant select, insert, update, delete on table public.daily_census to service_role;
 grant select, insert, update, delete on table public.daily_apartment_profile to service_role;
+grant select, insert, update, delete on table public.apartment_profiles to service_role;
 grant select, insert, update, delete on table public.admin_users to service_role;

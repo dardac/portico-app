@@ -65,60 +65,14 @@ insert into towers (code, name, floors, units_per_floor) values
   ('C', 'Torre C', 14, 8),
   ('D', 'Torre D', 14, 8);
 
-// ---------------------------------------------------------------------------
-// Seguridad (RLS) — ver migración 020_row_level_security.sql
-// PostgREST (anon/authenticated) bloqueado; la app usa portico_app + service_role.
-// ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Seguridad (RLS) — ver migración 020_row_level_security.sql
+-- PostgREST (anon/authenticated) bloqueado; la app usa portico_app + service_role.
+-- ---------------------------------------------------------------------------
 
 alter table towers enable row level security;
 alter table apartments enable row level security;
 
-create table daily_apartment_profile (
-  id uuid primary key default gen_random_uuid(),
-  apartment_id uuid not null references apartments (id) on delete cascade,
-  profile_date date not null,
-  occupation text not null,
-  infrastructure_status text
-    check (
-      infrastructure_status is null
-      or infrastructure_status in (
-        'none',
-        'minor_cracks',
-        'severe_damage',
-        'uninhabitable'
-      )
-    ),
-  gas_pipe_status text
-    check (
-      gas_pipe_status is null
-      or gas_pipe_status in (
-        'ok',
-        'pending_review',
-        'pending_repair',
-        'repaired'
-      )
-    ),
-  water_pipe_status text
-    check (
-      water_pipe_status is null
-      or water_pipe_status in (
-        'ok',
-        'pending_review',
-        'pending_repair',
-        'repaired'
-      )
-    ),
-  emergency_contact_name text,
-  emergency_contact_phone text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (apartment_id, profile_date)
-);
-
-create index daily_apartment_profile_date_idx
-  on daily_apartment_profile (profile_date);
-
-create index daily_apartment_profile_apartment_date_idx
-  on daily_apartment_profile (apartment_id, profile_date);
+-- daily_apartment_profile se crea y evoluciona en las migraciones (009+).
 
 -- Los permisos reales se aplican en las migraciones (npm run db:migrate)

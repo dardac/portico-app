@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import {
+  getConnectivityStatusLabel,
+  type ConnectivityStatus,
+} from "@/lib/apartment/connectivity-status";
+import {
   getInfrastructureStatusLabel,
   type InfrastructureStatus,
 } from "@/lib/apartment/infrastructure-status";
@@ -19,6 +23,7 @@ type ApartmentRow = {
   floor: number | null;
   unit: number;
   apartment_type: "standard" | "nt" | "ph";
+  registered_at: string | null;
   towers: { code: string } | { code: string }[];
 };
 
@@ -47,6 +52,7 @@ type ProfileRow = {
   infrastructure_status: string | null;
   gas_pipe_status: string | null;
   water_pipe_status: string | null;
+  connectivity_status: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   updated_at: string;
@@ -64,6 +70,10 @@ function mapProfile(row: ProfileRow) {
     waterPipeStatus: row.water_pipe_status,
     waterPipeStatusLabel: getPipeStatusLabel(
       row.water_pipe_status as PipeStatus | null,
+    ),
+    connectivityStatus: row.connectivity_status,
+    connectivityStatusLabel: getConnectivityStatusLabel(
+      row.connectivity_status as ConnectivityStatus | null,
     ),
     emergencyContactName: row.emergency_contact_name,
     emergencyContactPhone: row.emergency_contact_phone,
@@ -103,7 +113,9 @@ export async function GET(request: Request) {
 
   const { data: apartments, error: apartmentsError } = await supabase
     .from("apartments")
-    .select("id, code, floor, unit, apartment_type, towers!inner(code)")
+    .select(
+      "id, code, floor, unit, apartment_type, registered_at, towers!inner(code)",
+    )
     .eq("is_active", true)
     .order("code");
 
@@ -138,11 +150,10 @@ export async function GET(request: Request) {
   }
 
   const { data: profileRows, error: profileError } = await supabase
-    .from("daily_apartment_profile")
+    .from("apartment_profiles")
     .select(
-      "apartment_id, occupation, infrastructure_status, gas_pipe_status, water_pipe_status, emergency_contact_name, emergency_contact_phone, updated_at",
-    )
-    .eq("profile_date", censusDate);
+      "apartment_id, occupation, infrastructure_status, gas_pipe_status, water_pipe_status, connectivity_status, emergency_contact_name, emergency_contact_phone, updated_at",
+    );
 
   if (profileError) {
     console.error("Error al cargar perfiles:", profileError.message);
@@ -170,8 +181,12 @@ export async function GET(request: Request) {
 
   const canViewPii = canViewResidentPii(session.role);
 
+  const registeredInAppCount =
+    apartments?.filter((row) => row.registered_at != null).length ?? 0;
+
   const adminTotals = {
     apartments: apartments.length,
+    registeredInApp: registeredInAppCount,
     answered: censusRows?.length ?? 0,
     staying: censusRows?.filter((row) => row.will_stay_overnight).length ?? 0,
     adults:
@@ -206,6 +221,7 @@ export async function GET(request: Request) {
   const totals = canViewPii
     ? adminTotals
     : {
+        registeredInApp: adminTotals.registeredInApp,
         staying: adminTotals.staying,
         adults: adminTotals.adults,
         children: adminTotals.children,
@@ -231,6 +247,7 @@ type MappedApartment = {
   code: string;
   unit: number;
   type: string;
+  isRegisteredInApp: boolean;
   census: ReturnType<typeof mapCensus> | VigilanteCensusSummary | null;
   profile: ReturnType<typeof mapProfile> | null;
 };
@@ -267,6 +284,7 @@ function sanitizeTowersForVigilante(towers: MappedTower[]): MappedTower[] {
           code: apartment.code,
           unit: apartment.unit,
           type: apartment.type,
+          isRegisteredInApp: apartment.isRegisteredInApp,
           census: vigilanteCensus,
           profile: null,
         };
@@ -294,6 +312,7 @@ function buildTowerSummary(
             code: string;
             unit: number;
             type: string;
+            isRegisteredInApp: boolean;
             census: {
               willStayOvernight: boolean;
               adultCount: number | null;
@@ -313,6 +332,8 @@ function buildTowerSummary(
               gasPipeStatusLabel: string;
               waterPipeStatus: string | null;
               waterPipeStatusLabel: string;
+              connectivityStatus: string | null;
+              connectivityStatusLabel: string;
               emergencyContactName: string | null;
               emergencyContactPhone: string | null;
               updatedAt: string;
@@ -348,6 +369,7 @@ function buildTowerSummary(
       code: apartment.code,
       unit: apartment.unit,
       type: apartment.apartment_type,
+      isRegisteredInApp: apartment.registered_at != null,
       census: census ? mapCensus(census) : null,
       profile: profile ? mapProfile(profile) : null,
     });

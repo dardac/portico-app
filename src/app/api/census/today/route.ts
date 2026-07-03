@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getValidatedSession } from "@/lib/auth/session";
+import { buildCensusTotals, type CensusTotals } from "@/lib/census/totals";
 import { getTodayInCaracas, getYesterdayInCaracas } from "@/lib/dates";
 import { mapSupabaseError } from "@/lib/supabase/errors";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   MAX_COUNT,
   MAX_OCCUPANT_NAMES_LENGTH,
@@ -120,6 +122,52 @@ function validateOvernightFields(body: {
 const CENSUS_SELECT =
   "will_stay_overnight, adult_count, children_count, occupant_names, has_disability, disability_type, vehicle_count, pet_count, updated_at";
 
+async function loadBuildingTotals(
+  supabase: SupabaseClient,
+  censusDate: string,
+): Promise<{ totals: CensusTotals } | { error: string }> {
+  const [apartmentsResult, censusResult] = await Promise.all([
+    supabase.from("apartments").select("registered_at").eq("is_active", true),
+    supabase
+      .from("daily_census")
+      .select("will_stay_overnight, adult_count, children_count")
+      .eq("census_date", censusDate),
+  ]);
+
+  if (apartmentsResult.error) {
+    console.error(
+      "Error al cargar totales de apartamentos:",
+      apartmentsResult.error.message,
+    );
+    return {
+      error: mapSupabaseError(
+        apartmentsResult.error,
+        "No se pudo cargar el resumen del edificio.",
+      ),
+    };
+  }
+
+  if (censusResult.error) {
+    console.error(
+      "Error al cargar totales del registro:",
+      censusResult.error.message,
+    );
+    return {
+      error: mapSupabaseError(
+        censusResult.error,
+        "No se pudo cargar el resumen del edificio.",
+      ),
+    };
+  }
+
+  return {
+    totals: buildCensusTotals(
+      apartmentsResult.data ?? [],
+      censusResult.data ?? [],
+    ),
+  };
+}
+
 export async function GET() {
   const session = await getValidatedSession();
 
@@ -130,6 +178,11 @@ export async function GET() {
   const censusDate = getTodayInCaracas();
   const yesterdayDate = getYesterdayInCaracas();
   const supabase = createSupabaseServerClient();
+
+  const totalsResult = await loadBuildingTotals(supabase, censusDate);
+  if ("error" in totalsResult) {
+    return NextResponse.json({ error: totalsResult.error }, { status: 500 });
+  }
 
   const { data: todayRow, error: todayError } = await supabase
     .from("daily_census")
@@ -157,6 +210,7 @@ export async function GET() {
       entry: mapEntry(todayRow),
       isSaved: true,
       prefill: null,
+      totals: totalsResult.totals,
     });
   }
 
@@ -190,6 +244,7 @@ export async function GET() {
           ...mapEntry(yesterdayRow),
         }
       : null,
+    totals: totalsResult.totals,
   });
 }
 
@@ -280,10 +335,16 @@ export async function PUT(request: Request) {
     );
   }
 
+  const totalsResult = await loadBuildingTotals(supabase, censusDate);
+  if ("error" in totalsResult) {
+    return NextResponse.json({ error: totalsResult.error }, { status: 500 });
+  }
+
   return NextResponse.json({
     censusDate,
     entry: mapEntry(data),
     isSaved: true,
     prefill: null,
+    totals: totalsResult.totals,
   });
 }

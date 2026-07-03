@@ -2,7 +2,9 @@
 
 import { FormEvent, useState } from "react";
 import { ApartmentField } from "@/components/ApartmentField";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
 import { SuccessAlert } from "@/components/ui/SuccessAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import {
   formatApartmentInput,
   isValidApartment,
@@ -17,7 +19,6 @@ type FormErrors = {
   email?: string;
   phone?: string;
   password?: string;
-  form?: string;
 };
 
 type RegisterFormProps = {
@@ -32,6 +33,7 @@ export function RegisterForm({ onSuccess }: RegisterFormProps) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -49,12 +51,62 @@ export function RegisterForm({ onSuccess }: RegisterFormProps) {
     setPhone("");
     setPassword("");
     setErrors({});
+    setFormError(null);
     setIsSuccess(false);
+  }
+
+  async function checkApartment() {
+    setFormError(null);
+    setIsSubmitting(true);
+
+    const result = await fetchJson<{ error?: string }>(
+      "/api/auth/check-apartment",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apartment }),
+      },
+    );
+
+    if (!result.ok) {
+      if (result.status && result.status < 500) {
+        setErrors({ apartment: result.error });
+      } else {
+        setFormError(result.error);
+      }
+      setIsSubmitting(false);
+      return;
+    }
+
+    setStep("details");
+    setIsSubmitting(false);
+  }
+
+  async function registerAccount() {
+    setFormError(null);
+    setIsSubmitting(true);
+
+    const result = await fetchJson<{ error?: string }>("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apartment, email, phone, password }),
+    });
+
+    if (!result.ok) {
+      setFormError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
+
+    setIsSuccess(true);
+    onSuccess?.();
+    setIsSubmitting(false);
   }
 
   async function handleCheckApartment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSuccess(false);
+    setFormError(null);
 
     const nextErrors: FormErrors = {};
 
@@ -71,35 +123,13 @@ export function RegisterForm({ onSuccess }: RegisterFormProps) {
     }
 
     setErrors({});
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch("/api/auth/check-apartment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apartment }),
-      });
-
-      const data: { error?: string } = await response.json();
-
-      if (!response.ok) {
-        setErrors({ apartment: data.error ?? "No se pudo verificar el apartamento." });
-        return;
-      }
-
-      setStep("details");
-    } catch {
-      setErrors({
-        form: "Error de conexión. Verifica tu internet e intenta de nuevo.",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    await checkApartment();
   }
 
   async function handleRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSuccess(false);
+    setFormError(null);
 
     const nextErrors: FormErrors = {};
 
@@ -127,40 +157,18 @@ export function RegisterForm({ onSuccess }: RegisterFormProps) {
     }
 
     setErrors({});
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apartment, email, phone, password }),
-      });
-
-      const data: { error?: string } = await response.json();
-
-      if (!response.ok) {
-        setErrors({ form: data.error ?? "No se pudo completar el registro." });
-        return;
-      }
-
-      setIsSuccess(true);
-      onSuccess?.();
-    } catch {
-      setErrors({
-        form: "Error de conexión. Verifica tu internet e intenta de nuevo.",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    await registerAccount();
   }
 
   if (step === "apartment") {
     return (
       <form onSubmit={handleCheckApartment} className="space-y-5" noValidate>
-        {errors.form && (
-          <div role="alert" className="alert-error">
-            {errors.form}
-          </div>
+        {formError && (
+          <RetryErrorAlert
+            message={formError}
+            onRetry={() => void checkApartment()}
+            isRetrying={isSubmitting}
+          />
         )}
 
         <ApartmentField
@@ -180,10 +188,12 @@ export function RegisterForm({ onSuccess }: RegisterFormProps) {
 
   return (
     <form onSubmit={handleRegister} className="space-y-5" noValidate>
-      {errors.form && (
-        <div role="alert" className="alert-error">
-          {errors.form}
-        </div>
+      {formError && (
+        <RetryErrorAlert
+          message={formError}
+          onRetry={() => void registerAccount()}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <SuccessAlert show={isSuccess}>

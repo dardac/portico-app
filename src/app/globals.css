@@ -531,16 +531,8 @@
     @apply min-w-0 flex-1 text-left;
   }
 
-  .stats-bar {
-    @apply grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-stone-200/60 bg-stone-200/60 shadow-sm sm:grid-cols-4;
-  }
-
-  .stats-bar-item {
-    @apply bg-white px-4 py-4;
-  }
-
   .census-filter-bar {
-    @apply flex flex-col gap-5 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-8 sm:gap-y-4;
+    @apply flex flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-start lg:gap-x-6 lg:gap-y-4;
   }
 
   .census-filter-field {
@@ -548,7 +540,11 @@
   }
 
   .census-filter-field--apartment {
-    @apply w-full sm:max-w-xs sm:flex-1;
+    @apply w-full lg:max-w-xs lg:flex-1;
+  }
+
+  .census-filter-field--select {
+    @apply w-full sm:min-w-[11.5rem] sm:max-w-[13rem] lg:w-auto;
   }
 
   .census-filter-chips {
@@ -736,6 +732,10 @@
 
   .alert-error {
     @apply rounded-lg border border-red-100 bg-red-50 px-3.5 py-2.5 text-sm text-red-700;
+  }
+
+  .alert-error-retry {
+    @apply flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between;
   }
 
   .alert-success {

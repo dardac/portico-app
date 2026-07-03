@@ -8,7 +8,14 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { formatDateInCaracas } from "@/lib/dates";
+import { formatDateTimeInCaracas } from "@/lib/dates";
+import { fetchJson } from "@/lib/fetch-client";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import {
+  CONNECTIVITY_STATUS_OPTIONS,
+  getConnectivityStatusLabel,
+  type ConnectivityStatus,
+} from "@/lib/apartment/connectivity-status";
 import {
   getInfrastructureStatusLabel,
   INFRASTRUCTURE_STATUS_OPTIONS,
@@ -24,13 +31,10 @@ type ProfileEntry = {
   infrastructureStatus: InfrastructureStatus | null;
   gasPipeStatus: PipeStatus | null;
   waterPipeStatus: PipeStatus | null;
+  connectivityStatus: ConnectivityStatus | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   updatedAt: string;
-};
-
-type ProfilePrefill = ProfileEntry & {
-  fromDate: string;
 };
 
 export type ApartmentProfileSectionHandle = {
@@ -60,6 +64,7 @@ function applyEntryToForm(
     setInfrastructureStatus: (value: InfrastructureStatus | null) => void;
     setGasPipeStatus: (value: PipeStatus | null) => void;
     setWaterPipeStatus: (value: PipeStatus | null) => void;
+    setConnectivityStatus: (value: ConnectivityStatus | null) => void;
     setEmergencyContactName: (value: string) => void;
     setEmergencyContactPhone: (value: string) => void;
   },
@@ -68,6 +73,7 @@ function applyEntryToForm(
   setters.setInfrastructureStatus(entry.infrastructureStatus);
   setters.setGasPipeStatus(entry.gasPipeStatus);
   setters.setWaterPipeStatus(entry.waterPipeStatus);
+  setters.setConnectivityStatus(entry.connectivityStatus);
   setters.setEmergencyContactName(entry.emergencyContactName ?? "");
   setters.setEmergencyContactPhone(entry.emergencyContactPhone ?? "");
 }
@@ -75,6 +81,7 @@ function applyEntryToForm(
 type ApartmentProfileSectionProps = {
   variant?: "default" | "sidebar";
   integration?: "standalone" | "combined";
+  disableCollapse?: boolean;
   hideOccupationField?: boolean;
   requireOccupation?: boolean;
   occupationValue?: string;
@@ -88,13 +95,11 @@ export const ApartmentProfileSection = forwardRef<
   ApartmentProfileSectionHandle,
   ApartmentProfileSectionProps
 >(function ApartmentProfileSection(
-  { variant = "default", integration = "standalone", hideOccupationField = false, requireOccupation = true, occupationValue, onOccupationChange, onProfileLoaded, onEditingChange, onNeedsSaveChange },
+  { variant = "default", integration = "standalone", disableCollapse = false, hideOccupationField = false, requireOccupation = true, occupationValue, onOccupationChange, onProfileLoaded, onEditingChange, onNeedsSaveChange },
   ref,
 ) {
   const isCombined = integration === "combined";
-  const [profileDate, setProfileDate] = useState("");
   const [entry, setEntry] = useState<ProfileEntry | null>(null);
-  const [prefill, setPrefill] = useState<ProfilePrefill | null>(null);
   const [isSaved, setIsSaved] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [occupation, setOccupation] = useState("");
@@ -102,11 +107,16 @@ export const ApartmentProfileSection = forwardRef<
     useState<InfrastructureStatus | null>(null);
   const [gasPipeStatus, setGasPipeStatus] = useState<PipeStatus | null>(null);
   const [waterPipeStatus, setWaterPipeStatus] = useState<PipeStatus | null>(null);
+  const [connectivityStatus, setConnectivityStatus] =
+    useState<ConnectivityStatus | null>(null);
   const [emergencyContactName, setEmergencyContactName] = useState("");
   const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [success, setSuccess] = useState(false);
   const [userExpandedPreference, setUserExpandedPreference] = useState<
     boolean | null
@@ -118,20 +128,19 @@ export const ApartmentProfileSection = forwardRef<
     setInfrastructureStatus,
     setGasPipeStatus,
     setWaterPipeStatus,
+    setConnectivityStatus,
     setEmergencyContactName,
     setEmergencyContactPhone,
   };
 
-  const displayEntry = entry ?? prefill;
-  const hasDisplayData = Boolean(displayEntry);
-  const isPrefilled = Boolean(prefill) && !isSaved;
-  const canCollapse = hasDisplayData && !isEditing;
-  const isExpanded = userExpandedPreference ?? !isCombined;
+  const hasDisplayData = Boolean(entry);
+  const canCollapse = !disableCollapse && hasDisplayData && !isEditing;
+  const isExpanded = disableCollapse || (userExpandedPreference ?? !isCombined);
   const showBody = !canCollapse || isExpanded;
 
   function getOccupationForSave(): string {
     if (hideOccupationField && !requireOccupation) {
-      return (occupation || displayEntry?.occupation || "").trim();
+      return (occupation || entry?.occupation || "").trim();
     }
 
     return (occupationValue ?? occupation).trim();
@@ -152,49 +161,56 @@ export const ApartmentProfileSection = forwardRef<
   }, [isEditing, isSaved, onNeedsSaveChange]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadProfile() {
-      try {
-        const response = await fetch("/api/apartment/profile");
-        const data = await response.json();
+      setLoadError(null);
 
-        if (!response.ok) {
-          setError(data.error ?? "No se pudieron cargar los datos.");
-          return;
-        }
+      const result = await fetchJson<{
+        entry: ProfileEntry | null;
+        isSaved: boolean;
+        error?: string;
+      }>("/api/apartment/profile");
 
-        setProfileDate(data.profileDate);
-        setEntry(data.entry);
-        setPrefill(data.prefill);
-        setIsSaved(data.isSaved);
+      if (cancelled) return;
 
-        if (data.entry) {
-          applyEntryToForm(data.entry, formSetters);
-          onProfileLoaded?.({ occupation: data.entry.occupation });
-          setIsEditing(false);
-          setUserExpandedPreference(null);
-        } else if (data.prefill) {
-          applyEntryToForm(data.prefill, formSetters);
-          onProfileLoaded?.({ occupation: data.prefill.occupation });
-          setIsEditing(false);
-          setUserExpandedPreference(null);
-        } else {
-          setIsEditing(true);
-        }
-      } catch {
-        setError("Error de conexión al cargar los datos del apartamento.");
-      } finally {
+      if (!result.ok) {
+        setLoadError(result.error);
         setIsLoading(false);
+        return;
       }
+
+      const data = result.data;
+      setEntry(data.entry);
+      setIsSaved(data.isSaved);
+
+      if (data.entry) {
+        applyEntryToForm(data.entry, formSetters);
+        onProfileLoaded?.({ occupation: data.entry.occupation });
+        setIsEditing(false);
+        setUserExpandedPreference(null);
+      } else {
+        setIsEditing(true);
+      }
+
+      setIsLoading(false);
     }
 
-    loadProfile();
-  }, []);
+    void loadProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
+
+  function retryLoad() {
+    setIsLoading(true);
+    setReloadKey((current) => current + 1);
+  }
 
   function resetFormToDisplayData() {
     if (entry) {
       applyEntryToForm(entry, formSetters);
-    } else if (prefill) {
-      applyEntryToForm(prefill, formSetters);
     }
   }
 
@@ -241,6 +257,14 @@ export const ApartmentProfileSection = forwardRef<
       };
     }
 
+    if (!connectivityStatus) {
+      return {
+        ok: false,
+        error:
+          "Indica si cuentas con servicios de telefonía fija, TV o internet.",
+      };
+    }
+
     if (!emergencyContactName.trim()) {
       return {
         ok: false,
@@ -269,6 +293,7 @@ export const ApartmentProfileSection = forwardRef<
         infrastructureStatus,
         gasPipeStatus,
         waterPipeStatus,
+        connectivityStatus,
         emergencyContactName: emergencyContactName.trim(),
         emergencyContactPhone: emergencyContactPhone.trim(),
       },
@@ -277,66 +302,51 @@ export const ApartmentProfileSection = forwardRef<
 
   async function persistProfile(
     body: Record<string, unknown>,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<{ ok: true } | { ok: false; error: string; retryable: boolean }> {
     setIsSaving(true);
 
-    try {
-      const response = await fetch("/api/apartment/profile", {
+    const result = await fetchJson<{ entry: ProfileEntry; error?: string }>(
+      "/api/apartment/profile",
+      {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
+      },
+    );
 
-      const data = await response.json();
+    setIsSaving(false);
 
-      if (!response.ok) {
-        return {
-          ok: false,
-          error: data.error ?? "No se pudieron guardar los datos del apartamento.",
-        };
-      }
-
-      setProfileDate(data.profileDate);
-      setEntry(data.entry);
-      setPrefill(null);
-      setIsSaved(true);
-      if (data.entry) applyEntryToForm(data.entry, formSetters);
-      setIsEditing(false);
-      setUserExpandedPreference(null);
-      setSuccess(true);
-      return { ok: true };
-    } catch {
-      return {
-        ok: false,
-        error: "Error de conexión al guardar los datos del apartamento.",
-      };
-    } finally {
-      setIsSaving(false);
+    if (!result.ok) {
+      return { ok: false, error: result.error, retryable: result.retryable };
     }
+
+    setEntry(result.data.entry);
+    setIsSaved(true);
+    applyEntryToForm(result.data.entry, formSetters);
+    setIsEditing(false);
+    setUserExpandedPreference(null);
+    setSuccess(true);
+    return { ok: true };
   }
 
   useImperativeHandle(ref, () => ({
     shouldSave: () => isEditing || !isSaved,
     validateAndSave: async () => {
       setError(null);
+      setErrorRetryable(false);
       setSuccess(false);
 
-      if (isEditing) {
+      if (isEditing || !isSaved) {
         const validated = validateFormFields();
         if (!validated.ok) return validated;
-        return persistProfile(validated.body);
-      }
-
-      if (!isSaved && prefill) {
-        const validated = validateFormFields();
-        if (!validated.ok) return validated;
-        return persistProfile(validated.body);
-      }
-
-      if (!isSaved) {
-        const validated = validateFormFields();
-        if (!validated.ok) return validated;
-        return persistProfile(validated.body);
+        const result = await persistProfile(validated.body);
+        if (!result.ok) {
+          setError(result.error);
+          setErrorRetryable(result.retryable);
+        }
+        return result.ok
+          ? { ok: true as const }
+          : { ok: false as const, error: result.error };
       }
 
       return { ok: true };
@@ -346,6 +356,7 @@ export const ApartmentProfileSection = forwardRef<
   async function handleStandaloneSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setErrorRetryable(false);
     setSuccess(false);
 
     const validated = validateFormFields();
@@ -357,6 +368,25 @@ export const ApartmentProfileSection = forwardRef<
     const result = await persistProfile(validated.body);
     if (!result.ok) {
       setError(result.error);
+      setErrorRetryable(result.retryable);
+    }
+  }
+
+  async function retrySave() {
+    setError(null);
+    setErrorRetryable(false);
+    setSuccess(false);
+
+    const validated = validateFormFields();
+    if (!validated.ok) {
+      setError(validated.error);
+      return;
+    }
+
+    const result = await persistProfile(validated.body);
+    if (!result.ok) {
+      setError(result.error);
+      setErrorRetryable(result.retryable);
     }
   }
 
@@ -370,6 +400,18 @@ export const ApartmentProfileSection = forwardRef<
         }
       >
         Cargando datos del apartamento…
+      </section>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <section className={variant === "sidebar" ? "app-card-compact w-full" : "app-card w-full"}>
+        <RetryErrorAlert
+          message={loadError}
+          onRetry={retryLoad}
+          isRetrying={isLoading}
+        />
       </section>
     );
   }
@@ -422,9 +464,9 @@ export const ApartmentProfileSection = forwardRef<
             >
               Tu apartamento
             </h2>
-            {variant === "default" && profileDate && (
+            {variant === "default" && entry && (
               <p className="mt-1.5 text-sm text-stone-500">
-                Datos de hoy · {formatDateInCaracas(profileDate)}
+                Última actualización · {formatDateTimeInCaracas(entry.updatedAt)}
               </p>
             )}
           </div>
@@ -454,14 +496,12 @@ export const ApartmentProfileSection = forwardRef<
       {showBody && (
         <div id={panelId}>
       {showLocalFeedback && error && (
-        <div role="alert" className="alert-error mt-4">{error}</div>
-      )}
-
-      {!isEditing && isPrefilled && prefill && (
-        <div className="alert-info mt-4">
-          Datos del {formatDateInCaracas(prefill.fromDate)} listos para hoy.
-          Confírmalos o edítalos si algo cambió.
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={errorRetryable ? retrySave : undefined}
+          isRetrying={isSaving}
+          className="mt-4"
+        />
       )}
 
       <SuccessAlert
@@ -474,13 +514,6 @@ export const ApartmentProfileSection = forwardRef<
 
       {isEditing ? (
         <div className="mt-5 space-y-4">
-          {isPrefilled && prefill && (
-            <div className="alert-info">
-              Datos del {formatDateInCaracas(prefill.fromDate)} autocompletados.
-              Revísalos antes de guardar, o edítalos si cambió algo.
-            </div>
-          )}
-
           {!hideOccupationField && (
             <div>
               <label htmlFor="occupation" className="field-label">
@@ -575,6 +608,61 @@ export const ApartmentProfileSection = forwardRef<
             onChange={setWaterPipeStatus}
           />
 
+          <fieldset>
+            <legend className="field-label mb-3">
+              ¿Cuenta con servicios de telefonía fija, TV o internet?
+            </legend>
+            <div className="infrastructure-grid">
+              {CONNECTIVITY_STATUS_OPTIONS.map((option) => {
+                const isSelected = connectivityStatus === option.value;
+
+                return (
+                  <label
+                    key={option.value}
+                    className={[
+                      "infrastructure-option",
+                      isSelected && "infrastructure-option-selected",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <input
+                      type="radio"
+                      name="connectivityStatus"
+                      className="sr-only"
+                      checked={isSelected}
+                      onChange={() => setConnectivityStatus(option.value)}
+                    />
+                    <span
+                      className="infrastructure-option-indicator"
+                      aria-hidden="true"
+                    >
+                      {isSelected && (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 16 16"
+                          fill="currentColor"
+                          className="h-3 w-3"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="infrastructure-option-body">
+                      <span className="infrastructure-option-title">
+                        {option.label}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+
           <div className="border-t border-stone-100 pt-4">
             <h3 className="text-sm font-semibold text-stone-800">
               Contacto de emergencia
@@ -642,11 +730,7 @@ export const ApartmentProfileSection = forwardRef<
                 disabled={isSaving}
                 className="btn-primary sm:flex-1"
               >
-                {isSaving
-                  ? "Guardando…"
-                  : isPrefilled
-                    ? "Confirmar datos"
-                    : "Guardar datos"}
+                {isSaving ? "Guardando…" : "Guardar datos"}
               </button>
               {hasDisplayData && (
                 <button
@@ -666,34 +750,38 @@ export const ApartmentProfileSection = forwardRef<
           )}
         </div>
       ) : (
-        displayEntry && (
+        entry && (
           <dl className="mt-5 grid grid-cols-2 gap-2">
             {!hideOccupationField && (
               <ProfileField
                 label="Ocupación"
-                value={displayEntry.occupation}
+                value={entry.occupation}
               />
             )}
             <ProfileField
               label="Infraestructura"
               value={getInfrastructureStatusLabel(
-                displayEntry.infrastructureStatus,
+                entry.infrastructureStatus,
               )}
             />
             <ProfileField
               label="Tuberías de gas"
-              value={getPipeStatusLabel(displayEntry.gasPipeStatus)}
+              value={getPipeStatusLabel(entry.gasPipeStatus)}
             />
             <ProfileField
               label="Tuberías de agua"
-              value={getPipeStatusLabel(displayEntry.waterPipeStatus)}
+              value={getPipeStatusLabel(entry.waterPipeStatus)}
+            />
+            <ProfileField
+              label="Telefonía, TV e internet"
+              value={getConnectivityStatusLabel(entry.connectivityStatus)}
             />
             <ProfileField
               label="Contacto de emergencia"
               value={
-                displayEntry.emergencyContactName &&
-                displayEntry.emergencyContactPhone
-                  ? `${displayEntry.emergencyContactName} · ${displayEntry.emergencyContactPhone}`
+                entry.emergencyContactName &&
+                entry.emergencyContactPhone
+                  ? `${entry.emergencyContactName} · ${entry.emergencyContactPhone}`
                   : "Sin registrar"
               }
             />

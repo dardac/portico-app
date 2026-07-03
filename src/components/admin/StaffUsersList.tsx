@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { CreateStaffUserForm } from "@/components/admin/CreateStaffUserForm";
 import { AppModal } from "@/components/ui/AppModal";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
 import { SuccessAlert } from "@/components/ui/SuccessAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import type { StaffUserSummary } from "@/lib/auth/admin-users-api";
 import type { StaffRole } from "@/lib/auth/roles";
 import { getStaffRoleLabel } from "@/lib/auth/roles";
@@ -34,7 +36,7 @@ function ChangePasswordPanel({
   const [confirmSave, setConfirmSave] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSubmit() {
+  async function submitPasswordChange() {
     if (!confirmSave) {
       setConfirmSave(true);
       return;
@@ -43,35 +45,40 @@ function ChangePasswordPanel({
     setError(null);
     setIsSubmitting(true);
 
-    try {
-      const response = await fetch(`/api/admin/users/${user.id}/password`, {
+    const result = await fetchJson<{ error?: string }>(
+      `/api/admin/users/${user.id}/password`,
+      {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
-      });
+      },
+    );
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "No se pudo cambiar la contraseña.");
-        return;
-      }
-
-      onSuccess();
-    } catch {
-      setError("Error de conexión. Intenta de nuevo.");
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setIsSubmitting(false);
       setConfirmSave(false);
+      return;
     }
+
+    onSuccess();
+    setIsSubmitting(false);
+    setConfirmSave(false);
+  }
+
+  async function handleSubmit() {
+    await submitPasswordChange();
   }
 
   return (
     <div className="staff-user-password-panel">
       {error && (
-        <div role="alert" className="alert-error mb-3">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={() => void submitPasswordChange()}
+          isRetrying={isSubmitting}
+          className="mb-3"
+        />
       )}
 
       <label htmlFor={`password-${user.id}`} className="field-label">

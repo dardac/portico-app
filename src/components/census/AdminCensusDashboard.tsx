@@ -8,13 +8,21 @@ import {
 import { formatCensusPeople } from "@/lib/census/format-people";
 import { downloadCensusExcel, type CensusExportData } from "@/lib/census/export-excel";
 import { formatDateInCaracas, getTodayInCaracas } from "@/lib/dates";
-import type { StaffRole } from "@/lib/auth/roles";
-import { canViewResidentPii } from "@/lib/auth/roles";
+import { canViewResidentPii, type StaffRole } from "@/lib/auth/roles";
+import { FilterSelect } from "@/components/ui/FilterSelect";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import { StatsBar } from "@/components/ui/StatsBar";
+import { fetchJson } from "@/lib/fetch-client";
 import {
-  formatApartmentInput,
-  isValidApartment,
-  normalizeApartmentCode,
-} from "@/lib/validators";
+  countVisibleApartments,
+  filterAdminTowers,
+  findMatchingTowerCode,
+  formatApartmentFilterInput,
+  getApartmentFilterError,
+  type OvernightFilter,
+  type RegisteredInAppFilter,
+  type TowerFilter,
+} from "@/lib/census/admin-tower-filters";
 
 type ApartmentProfile = {
   occupation: string;
@@ -47,6 +55,7 @@ type CensusApartment = {
   code: string;
   unit: number;
   type: string;
+  isRegisteredInApp: boolean;
   census: AdminCensus | VigilanteCensus | null;
   profile: ApartmentProfile | null;
 };
@@ -66,6 +75,7 @@ type CensusResponse = {
     children: number;
     pets?: number;
     apartments?: number;
+    registeredInApp?: number;
     answered?: number;
     staying?: number;
     people?: number;
@@ -135,18 +145,16 @@ function IconCheck() {
   );
 }
 
-function InfrastructureBadge({ profile }: { profile: ApartmentProfile | null }) {
-  if (!profile?.infrastructureStatus) return null;
-
-  if (profile.infrastructureStatus === "uninhabitable") {
-    return <span className="badge-danger">Inhabitable</span>;
+function RegisteredAppBadge({
+  isRegisteredInApp,
+}: {
+  isRegisteredInApp: boolean;
+}) {
+  if (isRegisteredInApp) {
+    return <span className="badge-success">En la app</span>;
   }
 
-  if (profile.infrastructureStatus === "severe_damage") {
-    return <span className="badge-warning">Daño severo</span>;
-  }
-
-  return null;
+  return <span className="badge-muted">Sin registro app</span>;
 }
 
 function CensusBadge({
@@ -240,19 +248,6 @@ function DetailTagPair({ children }: { children: ReactNode }) {
   return <div className="admin-apt-tag-pair">{children}</div>;
 }
 
-function formatEmergencyContact(
-  profile: ApartmentProfile,
-  canViewPii: boolean,
-): string {
-  if (!profile.emergencyContactPhone) return "—";
-
-  if (canViewPii && profile.emergencyContactName) {
-    return `${profile.emergencyContactName} · ${profile.emergencyContactPhone}`;
-  }
-
-  return profile.emergencyContactPhone;
-}
-
 function AdminApartmentRow({
   apartment,
   canViewPii,
@@ -277,10 +272,10 @@ function AdminApartmentRow({
           <span className="admin-apt-code">{apartment.code}</span>
           {!expanded && (
             <span className="flex flex-wrap items-center gap-1.5">
+              <RegisteredAppBadge
+                isRegisteredInApp={apartment.isRegisteredInApp}
+              />
               <CensusBadge apartment={apartment} canViewPii={canViewPii} />
-              {canViewPii && (
-                <InfrastructureBadge profile={apartment.profile} />
-              )}
             </span>
           )}
         </span>
@@ -311,6 +306,11 @@ function AdminApartmentRow({
                   <div className="admin-apt-tag-list">
                     <DetailTag
                       full
+                      label="Registro en app"
+                      value={apartment.isRegisteredInApp ? "Sí" : "No"}
+                    />
+                    <DetailTag
+                      full
                       label="Pernocta"
                       value={
                         apartment.census.willStayOvernight ? "Sí" : "No"
@@ -334,11 +334,6 @@ function AdminApartmentRow({
                         )}
                       />
                     </DetailTagPair>
-                    <DetailTag
-                      full
-                      label="Ocupación"
-                      value={apartment.profile?.occupation ?? "—"}
-                    />
                     <DetailTag
                       full
                       label="Ocupantes"
@@ -384,6 +379,11 @@ function AdminApartmentRow({
                   <div className="admin-apt-tag-list">
                     <DetailTag
                       full
+                      label="Registro en app"
+                      value={apartment.isRegisteredInApp ? "Sí" : "No"}
+                    />
+                    <DetailTag
+                      full
                       label="Pernocta"
                       value={
                         apartment.census.willStayOvernight ? "Sí" : "No"
@@ -423,93 +423,10 @@ function AdminApartmentRow({
                 </span>
               )}
             </section>
-
-            {canViewPii && (
-            <section className="admin-apt-tag-group">
-              <h4 className="admin-apt-panel-title">Apartamento</h4>
-              {apartment.profile ? (
-                <div className="admin-apt-tag-list">
-                  <DetailTag
-                    full
-                    label="Infraestructura"
-                    value={apartment.profile.infrastructureStatusLabel}
-                  />
-                  <DetailTag
-                    full
-                    label="Tuberías de gas"
-                    value={apartment.profile.gasPipeStatusLabel}
-                  />
-                  <DetailTag
-                    full
-                    label="Tuberías de agua"
-                    value={apartment.profile.waterPipeStatusLabel}
-                  />
-                  <DetailTag
-                    full
-                    label={
-                      canViewPii ? "Contacto de emergencia" : "Tel. emergencia"
-                    }
-                    value={formatEmergencyContact(apartment.profile, canViewPii)}
-                  />
-                </div>
-              ) : (
-                <span className="admin-apt-tag-empty">Sin perfil este día</span>
-              )}
-            </section>
-            )}
           </div>
         </div>
       )}
     </div>
-  );
-}
-
-type TowerFilter = "all" | "C" | "D";
-
-function filterCensusTowers(
-  towers: TowerData[],
-  towerFilter: TowerFilter,
-  apartmentFilter: string,
-): TowerData[] {
-  let filtered = towers;
-
-  if (towerFilter !== "all") {
-    filtered = filtered.filter((tower) => tower.code === towerFilter);
-  }
-
-  const normalizedApartment = apartmentFilter.trim()
-    ? normalizeApartmentCode(apartmentFilter)
-    : "";
-
-  if (normalizedApartment && isValidApartment(apartmentFilter)) {
-    filtered = filtered
-      .map((tower) => ({
-        ...tower,
-        floors: tower.floors
-          .map((floor) => ({
-            ...floor,
-            apartments: floor.apartments.filter(
-              (apartment) =>
-                normalizeApartmentCode(apartment.code) === normalizedApartment,
-            ),
-          }))
-          .filter((floor) => floor.apartments.length > 0),
-      }))
-      .filter((tower) => tower.floors.length > 0);
-  }
-
-  return filtered;
-}
-
-function countVisibleApartments(towers: TowerData[]): number {
-  return towers.reduce(
-    (total, tower) =>
-      total +
-      tower.floors.reduce(
-        (floorTotal, floor) => floorTotal + floor.apartments.length,
-        0,
-      ),
-    0,
   );
 }
 
@@ -589,27 +506,35 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
   const [data, setData] = useState<CensusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
     "idle",
   );
   const [towerFilter, setTowerFilter] = useState<TowerFilter>("all");
   const [apartmentFilter, setApartmentFilter] = useState("");
+  const [registeredFilter, setRegisteredFilter] =
+    useState<RegisteredInAppFilter>("all");
+  const [overnightFilter, setOvernightFilter] = useState<OvernightFilter>("all");
   const [collapsedTowers, setCollapsedTowers] = useState<
     Record<string, boolean>
   >({});
 
-  const apartmentFilterError =
-    apartmentFilter.trim() && !isValidApartment(apartmentFilter)
-      ? "Usa el formato piso+unidad-letra (ej. 11-D), NT/PH + número + letra (ej. NT1-D)."
-      : null;
+  const apartmentFilterError = getApartmentFilterError(apartmentFilter);
 
   const filteredTowers =
     data && !apartmentFilterError
-      ? filterCensusTowers(data.towers, towerFilter, apartmentFilter)
+      ? filterAdminTowers(data.towers, {
+          towerFilter,
+          apartmentFilter,
+          registeredFilter,
+          overnightFilter,
+        })
       : [];
 
   const hasActiveFilters =
     towerFilter !== "all" ||
+    registeredFilter !== "all" ||
+    overnightFilter !== "all" ||
     (apartmentFilter.trim() !== "" && !apartmentFilterError);
 
   const visibleApartmentCount = countVisibleApartments(filteredTowers);
@@ -632,25 +557,16 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
   }
 
   function handleApartmentFilterChange(value: string) {
-    const formatted = formatApartmentInput(value);
+    const formatted = formatApartmentFilterInput(value);
     setApartmentFilter(formatted);
 
-    if (formatted.trim() && isValidApartment(formatted) && data) {
-      const matchingTower = data.towers.find((tower) =>
-        tower.floors.some((floor) =>
-          floor.apartments.some(
-            (apartment) =>
-              normalizeApartmentCode(apartment.code) ===
-              normalizeApartmentCode(formatted),
-          ),
-        ),
-      );
-
+    if (formatted.trim() && data) {
+      const matchingTower = findMatchingTowerCode(data.towers, formatted);
       if (matchingTower) {
-        setTowerFilter(matchingTower.code as TowerFilter);
+        setTowerFilter(matchingTower as TowerFilter);
         setCollapsedTowers((current) => ({
           ...current,
-          [matchingTower.code]: false,
+          [matchingTower]: false,
         }));
       }
     }
@@ -659,40 +575,33 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
   function clearFilters() {
     setTowerFilter("all");
     setApartmentFilter("");
+    setRegisteredFilter("all");
+    setOvernightFilter("all");
   }
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadCensus() {
-      try {
-        const response = await fetch(
-          `/api/admin/census?date=${selectedDate}`,
-        );
-        const payload = await response.json();
+      setError(null);
 
-        if (cancelled) return;
+      const result = await fetchJson<CensusResponse>(
+        `/api/admin/census?date=${selectedDate}`,
+      );
 
-        if (!response.ok) {
-          setError(payload.error ?? "No se pudo cargar el registro.");
-          setData(null);
-          setCopyState("idle");
-          return;
-        }
+      if (cancelled) return;
 
-        setError(null);
-        setData(payload);
-        setCopyState("idle");
-      } catch {
-        if (cancelled) return;
-        setError("Error de conexión al cargar el registro.");
+      if (!result.ok) {
+        setError(result.error);
         setData(null);
         setCopyState("idle");
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
+        return;
       }
+
+      setData(result.data);
+      setCopyState("idle");
+      setIsLoading(false);
     }
 
     void loadCensus();
@@ -700,7 +609,12 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedDate]);
+  }, [selectedDate, reloadKey]);
+
+  function retryLoad() {
+    setIsLoading(true);
+    setReloadKey((current) => current + 1);
+  }
 
   function handleDateChange(nextDate: string) {
     setCopyState("idle");
@@ -738,16 +652,22 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
   const summaryStats = canViewPii
     ? [
         { label: "Apartamentos", value: data?.totals.apartments ?? 0 },
+        { label: "En la app", value: data?.totals.registeredInApp ?? 0 },
         { label: "Respondieron", value: data?.totals.answered ?? 0 },
         { label: "Pernoctan", value: data?.totals.staying ?? 0 },
         { label: "Adultos", value: data?.totals.adults ?? 0 },
-        { label: "Niños/adoles.", value: data?.totals.children ?? 0 },
-        { label: "Total personas", value: data?.totals.people ?? 0 },
+        { label: "Niños y adolescentes", value: data?.totals.children ?? 0 },
+        {
+          label: "Total personas",
+          value: data?.totals.people ?? 0,
+          highlight: true,
+        },
       ]
     : [
+        { label: "En la app", value: data?.totals.registeredInApp ?? 0 },
         { label: "Pernoctan", value: data?.totals.staying ?? 0 },
         { label: "Adultos", value: data?.totals.adults ?? 0 },
-        { label: "Niños/adoles.", value: data?.totals.children ?? 0 },
+        { label: "Niños y adolescentes", value: data?.totals.children ?? 0 },
         { label: "Mascotas", value: data?.totals.pets ?? 0 },
       ];
 
@@ -818,18 +738,7 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
 
       {data && (
         <div className="space-y-4">
-          <div className="stats-bar">
-            {summaryStats.map((stat) => (
-              <div key={stat.label} className="stats-bar-item">
-                <p className="text-xs font-medium tracking-wide text-stone-500 uppercase">
-                  {stat.label}
-                </p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight text-stone-900">
-                  {stat.value}
-                </p>
-              </div>
-            ))}
-          </div>
+          <StatsBar stats={summaryStats} ariaLabel="Resumen del registro" />
 
           <div className="app-card-compact space-y-4">
             <div className="census-filter-bar">
@@ -904,6 +813,31 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
                   </p>
                 )}
               </div>
+
+              <FilterSelect
+                id="census-registered-filter"
+                label="Registro en app"
+                value={registeredFilter}
+                onChange={setRegisteredFilter}
+                options={[
+                  { value: "all", label: "Todos" },
+                  { value: "registered", label: "En la app" },
+                  { value: "not_registered", label: "Sin registro" },
+                ]}
+              />
+
+              <FilterSelect
+                id="census-overnight-filter"
+                label="Pernocta"
+                value={overnightFilter}
+                onChange={setOvernightFilter}
+                options={[
+                  { value: "all", label: "Todos" },
+                  { value: "staying", label: "Sí pernocta" },
+                  { value: "not_staying", label: "No pernocta" },
+                  { value: "no_answer", label: "Sin respuesta" },
+                ]}
+              />
             </div>
 
             {hasActiveFilters && (
@@ -946,9 +880,11 @@ export function AdminCensusDashboard({ staffRole }: AdminCensusDashboardProps) {
       )}
 
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={retryLoad}
+          isRetrying={isLoading}
+        />
       )}
 
       {isLoading ? (

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import { fetchJson } from "@/lib/fetch-client";
 
 type ResidentProfile = {
   type: "resident";
@@ -37,44 +39,47 @@ export function EditUserProfileForm({
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  useEffect(() => {
-    async function loadProfile() {
-      setIsLoading(true);
-      setError(null);
+  async function loadProfile() {
+    setIsLoading(true);
+    setError(null);
+    setErrorRetryable(false);
 
-      try {
-        const response = await fetch("/api/auth/profile");
-        const data = await response.json();
+    const result = await fetchJson<{ profile: UserProfile; error?: string }>(
+      "/api/auth/profile",
+    );
 
-        if (!response.ok) {
-          setError(data.error ?? "No se pudo cargar el perfil.");
-          return;
-        }
-
-        const loadedProfile = data.profile as UserProfile;
-        setProfile(loadedProfile);
-        setEmail(loadedProfile.email);
-        setPhone(loadedProfile.phone);
-      } catch {
-        setError("Error de conexión al cargar el perfil.");
-      } finally {
-        setIsLoading(false);
-      }
+    if (!result.ok) {
+      setError(result.error);
+      setErrorRetryable(true);
+      setProfile(null);
+      setIsLoading(false);
+      return;
     }
 
-    loadProfile();
-  }, []);
+    const loadedProfile = result.data.profile;
+    setProfile(loadedProfile);
+    setEmail(loadedProfile.email);
+    setPhone(loadedProfile.phone);
+    setIsLoading(false);
+  }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    void loadProfile();
+  }, [reloadKey]);
+
+  async function saveProfile() {
     setError(null);
+    setErrorRetryable(false);
     setIsSubmitting(true);
 
-    try {
-      const response = await fetch("/api/auth/profile", {
+    const result = await fetchJson<{ profile: UserProfile; error?: string }>(
+      "/api/auth/profile",
+      {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -83,24 +88,30 @@ export function EditUserProfileForm({
           currentPassword: newPassword ? currentPassword : undefined,
           newPassword: newPassword || undefined,
         }),
-      });
+      },
+    );
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "No se pudo guardar el perfil.");
-        return;
-      }
-
-      setProfile(data.profile);
-      setCurrentPassword("");
-      setNewPassword("");
-      onSuccess?.();
-    } catch {
-      setError("Error de conexión al guardar el perfil.");
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
+      setErrorRetryable(result.retryable);
       setIsSubmitting(false);
+      return;
     }
+
+    setProfile(result.data.profile);
+    setCurrentPassword("");
+    setNewPassword("");
+    onSuccess?.();
+    setIsSubmitting(false);
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveProfile();
+  }
+
+  function retryLoad() {
+    setReloadKey((current) => current + 1);
   }
 
   if (isLoading) {
@@ -113,18 +124,22 @@ export function EditUserProfileForm({
 
   if (!profile) {
     return error ? (
-      <div role="alert" className="alert-error">
-        {error}
-      </div>
+      <RetryErrorAlert
+        message={error}
+        onRetry={retryLoad}
+        isRetrying={isLoading}
+      />
     ) : null;
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={errorRetryable ? () => void saveProfile() : undefined}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <div>

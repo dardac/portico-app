@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import { fetchJson } from "@/lib/fetch-client";
 
 export function AdminLoginForm() {
   const router = useRouter();
@@ -11,40 +13,40 @@ export function AdminLoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitLogin() {
     setError(null);
     setIsSubmitting(true);
 
-    try {
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+    const result = await fetchJson<{ error?: string }>("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "No se pudo iniciar sesión.");
-        return;
-      }
-
-      router.push("/registro");
-      router.refresh();
-    } catch {
-      setError("Error de conexión. Intenta de nuevo.");
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setIsSubmitting(false);
+      return;
     }
+
+    router.push("/registro");
+    router.refresh();
+    setIsSubmitting(false);
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitLogin();
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={() => void submitLogin()}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <div>

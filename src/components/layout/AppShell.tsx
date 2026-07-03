@@ -7,6 +7,7 @@ import { AppLogo } from "@/components/layout/AppLogo";
 import { UserMenu } from "@/components/layout/UserMenu";
 import type { AppSession } from "@/lib/auth/session";
 import {
+  canViewResidentPii,
   hasFullAdminAccess,
   isStaffSession,
 } from "@/lib/auth/roles";
@@ -23,9 +24,20 @@ type NavItem = { href: string; label: string };
 function getNavItems(session: AppSession): NavItem[] {
   const items: NavItem[] = [
     { href: "/registro", label: "Registro Diario" },
+  ];
+
+  if (isStaffSession(session)) {
+    if (canViewResidentPii(session.role)) {
+      items.push({ href: "/apartamentos", label: "Apartamentos" });
+    }
+  } else {
+    items.push({ href: "/apartamento", label: "Tu Apartamento" });
+  }
+
+  items.push(
     { href: "/cartelera", label: "Cartelera de Apoyo" },
     { href: "/protocolos", label: "Protocolos de Seguridad" },
-  ];
+  );
 
   if (isStaffSession(session) && hasFullAdminAccess(session)) {
     items.push({ href: "/usuarios", label: "Usuarios" });

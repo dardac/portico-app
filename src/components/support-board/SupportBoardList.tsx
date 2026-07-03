@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { CreateSupportPostForm } from "@/components/support-board/CreateSupportPostForm";
 import { AppModal } from "@/components/ui/AppModal";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
 import { SuccessAlert } from "@/components/ui/SuccessAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import { formatDateTimeInCaracas } from "@/lib/dates";
 import {
   SUPPORT_CATEGORIES,
@@ -33,6 +35,9 @@ export function SupportBoardList({
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorRetryable, setErrorRetryable] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [failedAction, setFailedAction] = useState<PendingAction | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actionPostId, setActionPostId] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -46,17 +51,20 @@ export function SupportBoardList({
     async function loadPosts() {
       setIsLoading(true);
       setError(null);
+      setErrorRetryable(false);
+
+      const url =
+        categoryFilter === "all"
+          ? "/api/support-board"
+          : `/api/support-board?category=${categoryFilter}`;
 
       try {
-        const url =
-          categoryFilter === "all"
-            ? "/api/support-board"
-            : `/api/support-board?category=${categoryFilter}`;
         const response = await fetch(url, { signal: controller.signal });
         const data = await response.json();
 
         if (!response.ok) {
           setError(data.error ?? "No se pudo cargar la cartelera.");
+          setErrorRetryable(true);
           setPosts([]);
           return;
         }
@@ -70,6 +78,7 @@ export function SupportBoardList({
           return;
         }
         setError("Error de conexión al cargar la cartelera.");
+        setErrorRetryable(true);
         setPosts([]);
       } finally {
         if (!controller.signal.aborted) {
@@ -78,51 +87,61 @@ export function SupportBoardList({
       }
     }
 
-    loadPosts();
+    void loadPosts();
     return () => controller.abort();
-  }, [categoryFilter]);
+  }, [categoryFilter, reloadKey]);
+
+  function retryLoad() {
+    setReloadKey((current) => current + 1);
+  }
+
+  async function runAction(action: PendingAction) {
+    const { type, postId } = action;
+    setActionPostId(postId);
+    setError(null);
+    setErrorRetryable(false);
+    setFailedAction(null);
+
+    const endpoint =
+      type === "close"
+        ? `/api/support-board/${postId}/close`
+        : `/api/support-board/${postId}/attend`;
+
+    const result = await fetchJson<{ post: SupportPostDto; error?: string }>(
+      endpoint,
+      { method: "PATCH" },
+    );
+
+    if (!result.ok) {
+      setError(result.error);
+      setErrorRetryable(result.retryable);
+      setFailedAction(action);
+      setActionPostId(null);
+      return;
+    }
+
+    setPosts((current) =>
+      current.map((post) => (post.id === postId ? result.data.post : post)),
+    );
+
+    if (type === "attend") {
+      setSuccessMessage("Publicación marcada como atendida.");
+    }
+
+    setActionPostId(null);
+  }
 
   async function executePendingAction() {
     if (!pendingAction) return;
 
-    const { type, postId } = pendingAction;
+    const action = pendingAction;
     setPendingAction(null);
-    setActionPostId(postId);
+    await runAction(action);
+  }
 
-    try {
-      const endpoint =
-        type === "close"
-          ? `/api/support-board/${postId}/close`
-          : `/api/support-board/${postId}/attend`;
-      const response = await fetch(endpoint, { method: "PATCH" });
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(
-          data.error ??
-            (type === "close"
-              ? "No se pudo cerrar la publicación."
-              : "No se pudo marcar como atendida."),
-        );
-        return;
-      }
-
-      setPosts((current) =>
-        current.map((post) => (post.id === postId ? data.post : post)),
-      );
-
-      if (type === "attend") {
-        setSuccessMessage("Publicación marcada como atendida.");
-      }
-    } catch {
-      setError(
-        type === "close"
-          ? "Error de conexión al cerrar la publicación."
-          : "Error de conexión al actualizar la publicación.",
-      );
-    } finally {
-      setActionPostId(null);
-    }
+  function retryLastAction() {
+    if (!failedAction) return;
+    void runAction(failedAction);
   }
 
   const openCount = posts.filter((post) => post.isOpen).length;
@@ -212,9 +231,17 @@ export function SupportBoardList({
       </div>
 
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={
+            failedAction
+              ? retryLastAction
+              : errorRetryable
+                ? retryLoad
+                : undefined
+          }
+          isRetrying={isLoading || actionPostId !== null}
+        />
       )}
 
       {isLoading ? (

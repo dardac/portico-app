@@ -3,13 +3,14 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { ApartmentField } from "@/components/ApartmentField";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
 import { SuccessAlert } from "@/components/ui/SuccessAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import { formatApartmentInput, isValidApartment } from "@/lib/validators";
 
 type FormErrors = {
   apartment?: string;
   password?: string;
-  form?: string;
 };
 
 export function LoginForm() {
@@ -18,6 +19,7 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -29,9 +31,35 @@ export function LoginForm() {
     }
   }
 
+  async function submitLogin() {
+    setFormError(null);
+    setIsSubmitting(true);
+
+    const result = await fetchJson<{ error?: string; success?: boolean }>(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apartment, password }),
+      },
+    );
+
+    if (!result.ok) {
+      setFormError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
+
+    setIsSuccess(true);
+    router.push("/registro");
+    router.refresh();
+    setIsSubmitting(false);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSuccess(false);
+    setFormError(null);
 
     const nextErrors: FormErrors = {};
 
@@ -52,40 +80,17 @@ export function LoginForm() {
     }
 
     setErrors({});
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apartment, password }),
-      });
-
-      const data: { error?: string; success?: boolean } = await response.json();
-
-      if (!response.ok) {
-        setErrors({ form: data.error ?? "No se pudo iniciar sesión." });
-        return;
-      }
-
-      setIsSuccess(true);
-      router.push("/registro");
-      router.refresh();
-    } catch {
-      setErrors({
-        form: "Error de conexión. Verifica tu internet e intenta de nuevo.",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    await submitLogin();
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-      {errors.form && (
-        <div role="alert" className="alert-error">
-          {errors.form}
-        </div>
+      {formError && (
+        <RetryErrorAlert
+          message={formError}
+          onRetry={() => void submitLogin()}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <SuccessAlert show={isSuccess}>

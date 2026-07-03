@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
+import { fetchJson } from "@/lib/fetch-client";
 import type { StaffRole } from "@/lib/auth/roles";
 import { getStaffRoleLabel, STAFF_ROLES } from "@/lib/auth/roles";
 import { sanitizeStaffUsernameInput } from "@/lib/validators";
@@ -31,44 +33,44 @@ export function CreateStaffUserForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitCreate() {
     setError(null);
     setIsSubmitting(true);
 
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          username: sanitizeStaffUsernameInput(form.username),
-        }),
-      });
+    const result = await fetchJson<{ error?: string }>("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...form,
+        username: sanitizeStaffUsernameInput(form.username),
+      }),
+    });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "No se pudo crear el usuario.");
-        return;
-      }
-
-      setForm(INITIAL_STATE);
-      setShowPassword(false);
-      onSuccess?.();
-    } catch {
-      setError("Error de conexión. Intenta de nuevo.");
-    } finally {
+    if (!result.ok) {
+      setError(result.error);
       setIsSubmitting(false);
+      return;
     }
+
+    setForm(INITIAL_STATE);
+    setShowPassword(false);
+    onSuccess?.();
+    setIsSubmitting(false);
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitCreate();
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error && (
-        <div role="alert" className="alert-error">
-          {error}
-        </div>
+        <RetryErrorAlert
+          message={error}
+          onRetry={() => void submitCreate()}
+          isRetrying={isSubmitting}
+        />
       )}
 
       <div>
