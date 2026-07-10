@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RetryErrorAlert } from "@/components/ui/RetryErrorAlert";
@@ -94,6 +95,14 @@ export function AdminLoginForm() {
             {showPassword ? "Ocultar" : "Ver"}
           </button>
         </div>
+        <p className="mt-2 text-right text-sm">
+          <Link
+            href="/admin/olvide-contrasena"
+            className="font-medium text-stone-600 underline decoration-stone-300 underline-offset-2 transition hover:text-stone-900 hover:decoration-stone-500"
+          >
+            ¿Olvidaste tu contraseña?
+          </Link>
+        </p>
       </div>
 
       <button type="submit" disabled={isSubmitting} className="btn-primary">

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { ApartmentField } from "@/components/ApartmentField";
@@ -144,6 +145,14 @@ export function LoginForm() {
             {errors.password}
           </p>
         )}
+        <p className="mt-2 text-right text-sm">
+          <Link
+            href="/olvide-contrasena"
+            className="font-medium text-stone-600 underline decoration-stone-300 underline-offset-2 transition hover:text-stone-900 hover:decoration-stone-500"
+          >
+            ¿Olvidaste tu contraseña?
+          </Link>
+        </p>
       </div>
 
       <button type="submit" disabled={isSubmitting} className="btn-primary">

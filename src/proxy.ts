@@ -9,14 +9,24 @@ import {
   isStaffSession,
 } from "@/lib/auth/roles";
 
-const PUBLIC_PATHS = ["/", "/admin"];
+const PUBLIC_PATHS = [
+  "/",
+  "/admin",
+  "/olvide-contrasena",
+  "/restablecer-contrasena",
+  "/admin/olvide-contrasena",
+];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = getSessionTokenFromRequest(request);
   const session = token ? await validateSessionToken(token) : null;
 
-  if (pathname.startsWith("/api/auth/") || pathname === "/api/admin/login") {
+  if (
+    pathname.startsWith("/api/auth/") ||
+    pathname === "/api/admin/login" ||
+    pathname === "/api/admin/forgot-password"
+  ) {
     return NextResponse.next();
   }
 
@@ -106,6 +116,9 @@ export const config = {
   matcher: [
     "/",
     "/admin",
+    "/olvide-contrasena",
+    "/restablecer-contrasena",
+    "/admin/olvide-contrasena",
     "/registro/:path*",
     "/apartamento/:path*",
     "/apartamentos/:path*",
