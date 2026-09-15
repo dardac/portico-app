@@ -1,9 +1,9 @@
 {
-  "name": "portico-cyd",
+  "name": "portico-app",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -36,5 +36,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5"
-  }
+  },
+  "packageManager": "yarn@4.17.1"
 }
